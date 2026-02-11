@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
+  "repository": {
+    "url": "https://github.com/d10r/macro-relayer"
+  },
   "scripts": {
     "start": "tsx src/app.ts",
     "dev": "tsx watch src/app.ts"
