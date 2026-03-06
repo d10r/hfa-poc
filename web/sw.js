@@ -5,9 +5,10 @@ self.addEventListener('push', event => {
   
   const options = {
     body: data.message || 'New notification',
+    // Put Accept second so it appears as primary (right) button on Android
     actions: [
-      { action: 'accept', title: 'Accept' },
-      { action: 'reject', title: 'Reject' }
+      { action: 'reject', title: 'Reject' },
+      { action: 'accept', title: 'Accept' }
     ],
     data: {
       notificationId: data.notificationId

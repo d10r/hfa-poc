@@ -12,10 +12,18 @@ function hideStatus(elementId) {
   document.getElementById(elementId).classList.add('hidden')
 }
 
+function updateActionsSupport() {
+  const el = document.getElementById('actions-support')
+  const supported = typeof Notification !== 'undefined' && (Notification.maxActions ?? 0) > 0
+  el.textContent = supported ? 'Actions supported' : 'Actions not supported'
+}
+
 function updateUI() {
   const registerBtn = document.getElementById('register-btn')
   const deviceInfo = document.getElementById('device-info')
   const deviceIdEl = document.getElementById('device-id')
+  
+  updateActionsSupport()
   
   if (deviceId) {
     registerBtn.classList.add('hidden')
