@@ -74,6 +74,7 @@ async function main() {
   const privkey = (key.startsWith('0x') ? key : `0x${key}`) as Hex
   const rpcUrl = requireEnv('RELAYER_RPC_URL')
   const forwarderAddress = requireEnv('RELAYER_ONLY712_MACRO_FORWARDER_ADDRESS') as Address
+  const host = process.env.HOST ?? 'localhost'
   const port = Number(process.env.PORT ?? 3000)
 
   const account = privateKeyToAccount(privkey)
@@ -143,6 +144,7 @@ async function main() {
         args: [request.macro, request.params, request.signer, request.signature],
       })
       const hash = await walletClient.sendTransaction({
+        chain: null,
         to: forwarderAddress,
         data,
       })
@@ -389,7 +391,7 @@ async function main() {
     res.json({ id: notificationId, response, respondedAt: now })
   })
 
-  app.listen(port, '0.0.0.0', () => log(`listening on 0.0.0.0:${port}`))
+  app.listen(port, host, () => log(`listening on ${host}:${port}`))
 }
 
 main().catch((err) => {
