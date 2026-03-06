@@ -7,7 +7,7 @@ Also includes a **Push Notification Service** for sending actionable notificatio
 ## Features
 
 - Relay EIP-712 signed transaction intents
-- Push notifications with Accept/Reject actions
+- Push notifications with Accept action (dismiss = Reject)
 - PWA web app for device registration
 - SQLite persistence for device subscriptions and notification history
 
@@ -137,7 +137,7 @@ Body:
 
 Response: `{ id, createdAt }`
 
-The notification will have two action buttons: **Accept** and **Reject**.
+The notification has an **Accept** button. To reject, tap the notification body or swipe to dismiss.
 
 #### GET /notifications
 
@@ -197,7 +197,7 @@ curl -X POST http://localhost:3000/notify \
 
 ### 3. Respond to Notification
 
-When the notification appears, click **Accept** or **Reject**. The response is recorded.
+When the notification appears, tap **Accept** to approve, or tap the notification body / swipe away to reject. The response is recorded.
 
 ### 4. Check Response
 

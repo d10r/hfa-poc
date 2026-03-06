@@ -99,6 +99,11 @@ async function main() {
   const corsOrigin = process.env.CORS_ORIGIN
   app.use(cors(corsOrigin ? { origin: corsOrigin } : {}))
   app.use(express.json())
+
+  app.get('/sw.js', (_req, res) => {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate')
+    res.sendFile(path.join(__dirname, '../web/sw.js'))
+  })
   app.use(express.static(path.join(__dirname, '../web')))
 
   app.post('/relay', async (req, res) => {
@@ -366,7 +371,7 @@ async function main() {
   })
 
   app.post('/response', (req, res) => {
-    const { notificationId, response } = req.body as NotificationResponse
+    const { notificationId, response, messageLength } = req.body as NotificationResponse
     if (!notificationId || !response) {
       res.status(400).json({ error: 'notificationId and response are required' })
       return
@@ -387,7 +392,11 @@ async function main() {
     const updateStmt = db.prepare('UPDATE notifications SET response = ?, responded_at = ? WHERE id = ?')
     updateStmt.run(response, now, notificationId)
 
-    log(`notification ${notificationId} ${response}`)
+    if (response === 'accepted' && messageLength !== undefined) {
+      log(`notification ${notificationId} ${response} messageLength=${messageLength}`)
+    } else {
+      log(`notification ${notificationId} ${response}`)
+    }
     res.json({ id: notificationId, response, respondedAt: now })
   })
 

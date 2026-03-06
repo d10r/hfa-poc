@@ -48,10 +48,6 @@ export async function sendNotification(
   const payload = JSON.stringify({
     notificationId: notification.id,
     message: notification.message,
-    actions: [
-      { action: 'accept', title: 'Accept' },
-      { action: 'reject', title: 'Reject' },
-    ],
   })
 
   try {

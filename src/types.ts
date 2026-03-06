@@ -35,4 +35,5 @@ export interface RegisterDeviceRequest {
 export interface NotificationResponse {
   notificationId: string
   response: 'accepted' | 'rejected'
+  messageLength?: number
 }
