@@ -10,7 +10,8 @@
     "build": "tsc",
     "start": "node dist/app.js",
     "dev": "tsx watch src/app.ts",
-    "generate-vapid": "tsx src/generate-vapid.ts"
+    "generate-vapid": "tsx src/generate-vapid.ts",
+    "test": "tsx --test test/**/*.test.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",

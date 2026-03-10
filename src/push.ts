@@ -3,6 +3,10 @@ import type { PushSubscription, Device, Notification } from './types.js'
 
 let vapidConfigured = false
 
+function isMockPushConfigured(): boolean {
+  return process.env.PUSH_MOCK_SUCCESS === '1' || process.env.PUSH_MOCK_FAILURE === '1'
+}
+
 export function configureVapid(): void {
   const publicKey = process.env.VAPID_PUBLIC_KEY
   const privateKey = process.env.VAPID_PRIVATE_KEY
@@ -19,7 +23,7 @@ export function configureVapid(): void {
 }
 
 export function isConfigured(): boolean {
-  return vapidConfigured
+  return vapidConfigured || isMockPushConfigured()
 }
 
 export function getPublicKey(): string | undefined {
@@ -40,6 +44,14 @@ export async function sendNotification(
   device: Device,
   notification: Notification
 ): Promise<{ success: boolean; error?: string }> {
+  if (process.env.PUSH_MOCK_SUCCESS === '1') {
+    return { success: true }
+  }
+
+  if (process.env.PUSH_MOCK_FAILURE === '1') {
+    return { success: false, error: 'Mock push failure' }
+  }
+
   if (!vapidConfigured) {
     return { success: false,error: 'VAPID not configured' }
   }

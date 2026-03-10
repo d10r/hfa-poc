@@ -1,5 +1,16 @@
 const API_BASE = window.location.origin
 let deviceId = localStorage.getItem('deviceId')
+let agentAddress = null
+
+function parseAgentFromUrl() {
+  const params = new URLSearchParams(window.location.search)
+  const agent = params.get('agent')
+  if (agent && /^0x[a-fA-F0-9]{40}$/.test(agent)) {
+    agentAddress = agent
+    return true
+  }
+  return false
+}
 
 function showStatus(elementId, message, type) {
   const el = document.getElementById(elementId)
@@ -22,8 +33,15 @@ function updateUI() {
   const registerBtn = document.getElementById('register-btn')
   const deviceInfo = document.getElementById('device-info')
   const deviceIdEl = document.getElementById('device-id')
+  const agentInfo = document.getElementById('agent-info')
+  const agentAddressEl = document.getElementById('agent-address')
   
   updateActionsSupport()
+  
+  if (agentAddress) {
+    agentInfo.classList.remove('hidden')
+    agentAddressEl.textContent = agentAddress
+  }
   
   if (deviceId) {
     registerBtn.classList.add('hidden')
@@ -74,10 +92,15 @@ async function registerDevice() {
       console.log('Push subscription created:', subscription)
     }
     
+    const body = { subscription }
+    if (agentAddress) {
+      body.agentAddress = agentAddress
+    }
+    
     const res = await fetch(`${API_BASE}/devices`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ subscription })
+      body: JSON.stringify(body)
     })
     
     if (!res.ok) {
@@ -178,5 +201,6 @@ function urlBase64ToUint8Array(base64String) {
   return outputArray
 }
 
+parseAgentFromUrl()
 updateUI()
 loadNotifications()
