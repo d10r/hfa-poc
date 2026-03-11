@@ -7,11 +7,12 @@
     "url": "https://github.com/d10r/hfa-poc"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc --project tsconfig.build.json",
     "start": "node dist/app.js",
     "dev": "tsx watch src/app.ts",
     "generate-vapid": "tsx src/generate-vapid.ts",
-    "test": "tsx --test test/**/*.test.ts"
+    "test": "tsx --test test/**/*.test.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",

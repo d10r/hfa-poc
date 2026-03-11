@@ -1,7 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawn, type ChildProcessByStdio } from 'node:child_process'
+import type { Readable } from 'node:stream'
 import { mkdtemp, rm } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
@@ -16,7 +17,7 @@ const SIGNATURE = `0x${'11'.repeat(65)}`
 
 interface TestServer {
   baseUrl: string
-  process: ChildProcessWithoutNullStreams
+  process: ChildProcessByStdio<null, Readable, Readable>
   dbPath: string
   cleanup: () => Promise<void>
 }

@@ -223,36 +223,101 @@ Access the web app at the root URL (`/`). It provides:
 
 ## Agent Harness
 
-The `agent/` directory contains scripts for signing transaction requests.
+The `agent/` directory contains modular scripts for signing and submitting transaction requests.
 
-### signer.ts
+### request.ts
 
-Sign a FlowScheduler712Macro transaction request:
+The CLI supports separate build/sign/send steps in two pragmatic modes:
+
+- `flow-scheduler` helper mode: convenient flags for the current FlowScheduler macro
+- raw action mode: pass already-encoded action params and typed-data metadata for any macro
 
 ```bash
-npx tsx agent/sign.ts \
+# One-shot submit with FlowScheduler helper mode
+npx tsx agent/request.ts submit \
   --private-key 0x... \
-  --forwarder 0x... \
+  --rpc-url https://optimism-sepolia.rpc.x.superfluid.dev \
+  --chain-id 11155420 \
+  --forwarder 0x712F1ccD0472025EC75bB67A92AA6406cDA0031D \
   --macro 0x... \
   --super-token 0x... \
   --receiver 0x... \
   --flow-rate 11574074074074 \
   --relayer-url http://localhost:3000
+
+# Build only with FlowScheduler helper mode
+npx tsx agent/request.ts build \
+  --rpc-url ... \
+  --forwarder 0x... \
+  --macro 0x... \
+  --super-token 0x... \
+  --receiver 0x... \
+  --flow-rate 11574074074074
+
+# Build only with signer auto-derived from private key
+PRIVATE_KEY=0x... npx tsx agent/request.ts build \
+  --rpc-url ... \
+  --forwarder 0x... \
+  --macro 0x... \
+  --super-token 0x... \
+  --receiver 0x... \
+  --flow-rate 11574074074074
+
+# Sign prepared JSON (from stdin)
+... build ... | npx tsx agent/request.ts sign --private-key 0x...
+
+# Send signed JSON (from stdin)
+... sign ... | npx tsx agent/request.ts send --relayer-url http://localhost:3000
+
+# Dry-run (build + sign, output JSON without sending)
+npx tsx agent/request.ts submit --dry-run \
+  --private-key 0x... \
+  --rpc-url ... \
+  --super-token 0x... \
+  --receiver 0x... \
+  --flow-rate 11574074074074
 ```
 
 Options:
 - `--private-key`: Agent's private key (or set `PRIVATE_KEY` env)
 - `--rpc-url`: RPC URL (or set `RPC_URL` env)
 - `--chain-id`: Chain ID (default: 11155420 for OP Sepolia)
-- `--forwarder`: Forwarder contract address
-- `--macro`: Macro contract address
+- `--forwarder`: ClearSigningMacroForwarder address (auto-configured from chain config)
+- `--macro`: Macro contract address (auto-configured from chain config)
+- `--macro-kind`: Builder mode (default: `flow-scheduler`)
 - `--relayer-url`: Relayer API URL (default: http://localhost:3000)
+- `--signer`: Signer address (auto-derived from private key if not provided)
+- `--action-params`: Pre-encoded macro action params for generic mode
+- `--action-description`: Human-readable action description for generic mode
+- `--primary-type`: EIP-712 primary type for generic mode
+- `--action-type-definition`: EIP-712 `Action(...)` struct definition for generic mode
+- `--action-message`: JSON object for the action payload in generic mode
 - `--super-token`: SuperToken address
 - `--receiver`: Receiver address
 - `--flow-rate`: Flow rate in wei per second
 - `--start-date`: Start date (unix timestamp, default: 1 hour from now)
-- `--end-date`: End date (unix timestamp, default: 0)
+- `--end-date`: End date (unix timestamp, default: 0 = indefinite)
+- `--start-max-delay`: Max delay for start in seconds (default: 86400)
+- `--start-amount`: Initial transfer amount in wei (default: 0)
+- `--user-data`: User data bytes (default: 0x)
+- `--domain`: Security domain (default: flowscheduler.xyz)
+- `--provider`: Security provider (default: macros.superfluid.eth)
+- `--valid-after`: Valid after timestamp (default: 0)
+- `--valid-before`: Valid before timestamp (default: 0)
+- `--nonce-key`: Nonce key (default: 0)
 - `--dry-run`: Only output JSON, don't send to relayer
+
+### Module Architecture
+
+The agent code is split into modular components:
+
+- **`request.ts`**: CLI entry point (build/sign/send/submit commands)
+- **`actionBuilders.ts`**: Minimal action builder selection and raw-action support
+- **`clearSigning.ts`**: Generic ClearSigning forwarder helper
+- **`flowScheduler.ts`**: FlowScheduler-specific action builder
+- **`relayClient.ts`**: HTTP client for submitting to relayer
+- **`config.ts`**: Chain addresses and security configuration
+- **`chain.ts`**: Shared chain metadata helper
 
 ## Usage Example
 
@@ -264,14 +329,34 @@ Options:
 
 ### 2. Send Transaction Request (as Agent)
 
+FlowScheduler helper mode:
+
 ```bash
-npx tsx agent/sign.ts \
+npx tsx agent/request.ts submit \
   --private-key $AGENT_PRIVKEY \
-  --forwarder 0x... \
-  --macro 0x... \
-  --super-token 0x... \
+  --rpc-url https://optimism-sepolia.rpc.x.superfluid.dev \
+  --chain-id 11155420 \
+  --forwarder 0x712F1ccD0472025EC75bB67A92AA6406cDA0031D \
+  --macro 0x7b043b577A10b06296FE0bD0402F5025d97A3839 \
+  --super-token 0x4eab9f84a4864325b48a30a3cf89f14672bcc752 \
   --receiver 0x... \
   --flow-rate 1000000000000000
+```
+
+Generic raw action mode:
+
+```bash
+npx tsx agent/request.ts submit \
+  --private-key $AGENT_PRIVKEY \
+  --rpc-url https://optimism-sepolia.rpc.x.superfluid.dev \
+  --chain-id 11155420 \
+  --forwarder 0x712F1ccD0472025EC75bB67A92AA6406cDA0031D \
+  --macro 0xYOUR_MACRO \
+  --action-params 0xENCODED_PARAMS \
+  --action-description "Execute macro action" \
+  --primary-type MyAction \
+  --action-type-definition 'Action(string description,uint256 amount)' \
+  --action-message '{"description":"Execute macro action","amount":"123"}'
 ```
 
 ### 3. Respond to Notification
@@ -289,4 +374,37 @@ curl http://localhost:3000/pending-requests/REQUEST-ID
 - Push notifications require HTTPS in production (localhost works for development)
 - Service worker must be registered for push notifications to work
 - Responses are stored in SQLite and persist across restarts
-- For FlowScheduler712Macro, ensure the signer has granted flow permissions to the FlowScheduler contract
+- For FlowScheduler macro, ensure the signer has granted flow permissions to the FlowScheduler contract
+- Default chain is Optimism Sepolia (chain ID 11155420)
+- Default forwarder: `0x712F1ccD0472025EC75bB67A92AA6406cDA0031D` (ClearSigningMacroForwarder)
+
+## Testing
+
+Run all tests:
+
+```bash
+npm test
+```
+
+Run only signer tests:
+
+```bash
+npm test -- test/signer.test.ts
+```
+
+Run only relayer integration tests:
+
+```bash
+npm test -- test/agent-relay.test.ts
+```
+# Build only with generic raw action mode
+npx tsx agent/request.ts build \
+  --rpc-url ... \
+  --forwarder 0x... \
+  --macro 0x... \
+  --action-params 0x... \
+  --action-description "Do something" \
+  --primary-type MyAction \
+  --action-type-definition 'Action(string description,uint256 amount)' \
+  --action-message '{"description":"Do something","amount":"123"}' \
+  --private-key 0x...
