@@ -1,0 +1,27 @@
+{
+  "chains": {
+    "11155420": {
+      "macro": "0x7b043b577A10b06296FE0bD0402F5025d97A3839"
+    }
+  },
+  "security": {
+    "domain": "flowscheduler.xyz"
+  },
+  "actions": {
+    "create-flow-schedule": {
+      "context": {
+        "lang": "bytes32:en"
+      },
+      "fields": {
+        "superToken": "address",
+        "receiver": "address",
+        "startDate": "uint32=now+3600",
+        "startMaxDelay": "uint32=86400",
+        "flowRate": "int96",
+        "startAmount": "uint256=0",
+        "endDate": "uint32=0",
+        "userData": "bytes=0x"
+      }
+    }
+  }
+}

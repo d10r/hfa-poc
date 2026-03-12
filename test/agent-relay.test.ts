@@ -33,24 +33,23 @@ async function startServer(options?: {
 }): Promise<TestServer> {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), 'hfa-relayer-test-'))
   const dbPath = path.join(tempDir, 'data.db')
-  const port = 5800 + Math.floor(Math.random() * 1000)
+  const basePort = 5800 + Math.floor(Math.random() * 1000)
+  let port = basePort
 
-  const env = {
-    ...process.env,
-    HOST: '127.0.0.1',
-    PORT: String(port),
-    DATABASE_PATH: dbPath,
-    RELAYER_PRIVKEY: BASE_PRIVATE_KEY,
-    RELAYER_RPC_URL: 'http://127.0.0.1:1',
-    RELAYER_CLEAR_SIGNING_MACRO_FORWARDER_ADDRESS: FORWARDER_ADDRESS,
-    PUSH_MOCK_SUCCESS: options?.pushMode === 'success' ? '1' : '0',
-    PUSH_MOCK_FAILURE: options?.pushMode === 'failure' ? '1' : '0',
-    MOCK_RELAY_EXECUTION: options?.relayMode ?? '',
-  }
-
-  const child = spawn('npx', ['tsx', 'src/app.ts'], {
+  let child = spawn('npx', ['tsx', 'src/app.ts'], {
     cwd: RELAYER_DIR,
-    env,
+    env: {
+      ...process.env,
+      HOST: '127.0.0.1',
+      PORT: String(port),
+      DATABASE_PATH: dbPath,
+      RELAYER_PRIVKEY: BASE_PRIVATE_KEY,
+      RELAYER_RPC_URL: 'http://127.0.0.1:1',
+      RELAYER_CLEAR_SIGNING_MACRO_FORWARDER_ADDRESS: FORWARDER_ADDRESS,
+      PUSH_MOCK_SUCCESS: options?.pushMode === 'success' ? '1' : '0',
+      PUSH_MOCK_FAILURE: options?.pushMode === 'failure' ? '1' : '0',
+      MOCK_RELAY_EXECUTION: options?.relayMode ?? '',
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
 
@@ -66,6 +65,32 @@ async function startServer(options?: {
 
     const onExit = (code: number | null) => {
       child.stdout.off('data', onStdout)
+      if (code === 1 && port < basePort + 10) {
+        port += 1
+        child = spawn('npx', ['tsx', 'src/app.ts'], {
+          cwd: RELAYER_DIR,
+          env: {
+            ...process.env,
+            HOST: '127.0.0.1',
+            PORT: String(port),
+            DATABASE_PATH: dbPath,
+            RELAYER_PRIVKEY: BASE_PRIVATE_KEY,
+            RELAYER_RPC_URL: 'http://127.0.0.1:1',
+            RELAYER_CLEAR_SIGNING_MACRO_FORWARDER_ADDRESS: FORWARDER_ADDRESS,
+            PUSH_MOCK_SUCCESS: options?.pushMode === 'success' ? '1' : '0',
+            PUSH_MOCK_FAILURE: options?.pushMode === 'failure' ? '1' : '0',
+            MOCK_RELAY_EXECUTION: options?.relayMode ?? '',
+          },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        })
+        child.stdout.on('data', onStdout)
+        child.once('exit', onExit)
+        child.stderr.on('data', chunk => {
+          const text = chunk.toString()
+          if (text.trim()) process.stderr.write(text)
+        })
+        return
+      }
       reject(new Error(`Server exited early with code ${code}`))
     }
 

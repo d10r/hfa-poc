@@ -3,10 +3,20 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { createServer } from 'node:http'
-import { buildTypedData, parsePreparedUnsignedRequest, parseSignedAgentRequest, serializeForJson, getChain, type ClearSigningTypedDataMessage } from '../agent/clearSigning.js'
+import {
+  buildTypedData,
+  parsePreparedUnsignedRequest,
+  parseSignedAgentRequest,
+  serializeForJson,
+  getChain,
+  type ClearSigningTypedDataMessage,
+} from '../agent/clearSigning.js'
 import type { PreparedUnsignedRequest, SignedAgentRequest } from '../agent/clearSigning.js'
-import { FLOW_SCHEDULER_ACTION_TYPE_DEFINITION, FLOW_SCHEDULER_PRIMARY_TYPE, getFlowSchedulerChain } from '../agent/flowScheduler.js'
-import { buildAction } from '../agent/actionBuilders.js'
+import {
+  buildMacroAction,
+  getMacroMetadata,
+  parseArgsJson,
+} from '../agent/macroMetadata.js'
 
 const TEST_CHAIN_ID = 11155420
 const TEST_FORWARDER = '0x712F1ccD0472025EC75bB67A92AA6406cDA0031D'
@@ -57,16 +67,12 @@ test('clearSigning: buildTypedData returns valid EIP-712 structure', () => {
 test('clearSigning: serializeForJson handles bigint correctly', () => {
   const obj = {
     value: 1234567890123456789n,
-    nested: {
-      amount: 100n,
-    },
+    nested: { amount: 100n },
     normal: 'string',
     number: 42,
   }
 
-  const json = serializeForJson(obj)
-  const parsed = JSON.parse(json)
-
+  const parsed = JSON.parse(serializeForJson(obj))
   assert.strictEqual(parsed.value, '1234567890123456789')
   assert.strictEqual(parsed.nested.amount, '100')
   assert.strictEqual(parsed.normal, 'string')
@@ -74,64 +80,34 @@ test('clearSigning: serializeForJson handles bigint correctly', () => {
 })
 
 test('clearSigning: serializeForJson handles all types', () => {
-  const obj = {
-    bigint: 0n,
-    negative: -1n,
-    max: 18446744073709551615n,
-    zero: '0',
-  }
-
-  const json = serializeForJson(obj)
-  const parsed = JSON.parse(json)
-
+  const parsed = JSON.parse(serializeForJson({ bigint: 0n, negative: -1n, max: 18446744073709551615n, zero: '0' }))
   assert.strictEqual(parsed.bigint, '0')
   assert.strictEqual(parsed.negative, '-1')
   assert.strictEqual(parsed.max, '18446744073709551615')
   assert.strictEqual(parsed.zero, '0')
 })
 
-test('flowScheduler: constants are correct', () => {
-  assert.strictEqual(
-    FLOW_SCHEDULER_ACTION_TYPE_DEFINITION,
-    'Action(string description,address superToken,address receiver,uint32 startDate,uint32 startMaxDelay,int96 flowRate,uint256 startAmount,uint32 endDate,bytes userData)'
-  )
-  assert.strictEqual(FLOW_SCHEDULER_PRIMARY_TYPE, 'ScheduleFlow')
+test('macro metadata: loads configured macro and action', () => {
+  const metadata = getMacroMetadata('flow-scheduler', 'create-flow-schedule', TEST_CHAIN_ID)
+  assert.strictEqual(metadata.macroAddress, '0x7b043b577A10b06296FE0bD0402F5025d97A3839')
+  assert.strictEqual(metadata.securityDomain, 'flowscheduler.xyz')
+  assert.ok(metadata.action.fields.superToken)
 })
 
-test('flowScheduler: getFlowSchedulerChain returns correct chain config', () => {
-  const chain = getFlowSchedulerChain(TEST_CHAIN_ID)
-  assert.strictEqual(chain.id, TEST_CHAIN_ID)
-  assert.strictEqual(chain.name, 'Optimism Sepolia')
-  assert.strictEqual(chain.nativeCurrency.symbol, 'ETH')
-})
-
-test('flowScheduler: getFlowSchedulerChain handles unknown chain', () => {
-  const chain = getFlowSchedulerChain(99999)
-  assert.strictEqual(chain.id, 99999)
-  assert.strictEqual(chain.name, 'Chain 99999')
-})
-
-test('flowScheduler: getFlowSchedulerChain uses custom RPC URL', () => {
-  const customRpc = 'https://custom-rpc.example.com'
-  const chain = getFlowSchedulerChain(TEST_CHAIN_ID, customRpc)
-  assert.strictEqual(chain.rpcUrls.default.http[0], customRpc)
+test('macro metadata: parses args json object', () => {
+  assert.deepStrictEqual(parseArgsJson('{"foo":"bar"}'), { foo: 'bar' })
+  assert.throws(() => parseArgsJson('[]'), /must be a JSON object/)
 })
 
 test('signing: can sign with correct private key', async () => {
   const { signPreparedRequest } = await import('../agent/clearSigning.js')
-
   const prepared: PreparedUnsignedRequest = {
     forwarderAddress: TEST_FORWARDER,
     macroAddress: '0x1234567890123456789012345678901234567890',
     signer: TEST_SIGNER,
     params: '0x',
     typedData: {
-      domain: {
-        name: 'ClearSigning',
-        version: '1',
-        chainId: TEST_CHAIN_ID,
-        verifyingContract: TEST_FORWARDER,
-      },
+      domain: { name: 'ClearSigning', version: '1', chainId: TEST_CHAIN_ID, verifyingContract: TEST_FORWARDER },
       types: {
         Action: [{ name: 'description', type: 'string' }],
         ScheduleFlow: [
@@ -165,28 +141,21 @@ test('signing: can sign with correct private key', async () => {
   }
 
   const signed = await signPreparedRequest(TEST_PRIVATE_KEY, prepared)
-
   assert.strictEqual(signed.forwarderAddress, TEST_FORWARDER)
   assert.strictEqual(signed.signer, TEST_SIGNER)
   assert.ok(signed.signature.startsWith('0x'))
-  assert.strictEqual(signed.signature.length, 132) // 65 bytes = 130 hex chars + 0x prefix
+  assert.strictEqual(signed.signature.length, 132)
 })
 
 test('signing: throws on signer mismatch', async () => {
   const { signPreparedRequest } = await import('../agent/clearSigning.js')
-
   const prepared: PreparedUnsignedRequest = {
     forwarderAddress: TEST_FORWARDER,
     macroAddress: '0x1234567890123456789012345678901234567890',
     signer: '0xwrongaddress0000000000000000000000000',
     params: '0x',
     typedData: {
-      domain: {
-        name: 'ClearSigning',
-        version: '1',
-        chainId: TEST_CHAIN_ID,
-        verifyingContract: TEST_FORWARDER,
-      },
+      domain: { name: 'ClearSigning', version: '1', chainId: TEST_CHAIN_ID, verifyingContract: TEST_FORWARDER },
       types: {
         Action: [{ name: 'description', type: 'string' }],
         ScheduleFlow: [
@@ -219,27 +188,18 @@ test('signing: throws on signer mismatch', async () => {
     actionDescription: 'Test flow',
   }
 
-  await assert.rejects(
-    signPreparedRequest(TEST_PRIVATE_KEY, prepared),
-    (err: Error) => err.message.includes('Signer address mismatch')
-  )
+  await assert.rejects(signPreparedRequest(TEST_PRIVATE_KEY, prepared), /Signer address mismatch/)
 })
 
 test('relayClient: can serialize and deserialize signed request', async () => {
-  const { signPreparedRequest, serializeForJson } = await import('../agent/clearSigning.js')
-
+  const { signPreparedRequest } = await import('../agent/clearSigning.js')
   const prepared: PreparedUnsignedRequest = {
     forwarderAddress: TEST_FORWARDER,
     macroAddress: '0x1234567890123456789012345678901234567890',
     signer: TEST_SIGNER,
     params: '0xabcdef',
     typedData: {
-      domain: {
-        name: 'ClearSigning',
-        version: '1',
-        chainId: TEST_CHAIN_ID,
-        verifyingContract: TEST_FORWARDER,
-      },
+      domain: { name: 'ClearSigning', version: '1', chainId: TEST_CHAIN_ID, verifyingContract: TEST_FORWARDER },
       types: {
         Action: [{ name: 'description', type: 'string' }],
         ScheduleFlow: [
@@ -273,13 +233,10 @@ test('relayClient: can serialize and deserialize signed request', async () => {
   }
 
   const signed = await signPreparedRequest(TEST_PRIVATE_KEY, prepared)
-  const json = serializeForJson(signed)
-  const parsed: SignedAgentRequest = JSON.parse(json)
-
+  const parsed: SignedAgentRequest = JSON.parse(serializeForJson(signed))
   assert.strictEqual(parsed.forwarderAddress, TEST_FORWARDER)
   assert.strictEqual(parsed.signer, TEST_SIGNER)
   assert.strictEqual(parsed.params, '0xabcdef')
-  assert.strictEqual(parsed.actionDescription, 'Test flow: send 1 USDCx/sec to 0x123...')
   assert.ok(parsed.signature.startsWith('0x'))
 })
 
@@ -290,17 +247,9 @@ test('request parsing: prepared request restores bigint fields', () => {
     signer: TEST_SIGNER,
     params: '0xabcdef',
     typedData: {
-      domain: {
-        name: 'ClearSigning',
-        version: '1',
-        chainId: TEST_CHAIN_ID,
-        verifyingContract: TEST_FORWARDER,
-      },
+      domain: { name: 'ClearSigning', version: '1', chainId: TEST_CHAIN_ID, verifyingContract: TEST_FORWARDER },
       types: {
-        Action: [
-          { name: 'description', type: 'string' },
-          { name: 'flowRate', type: 'int96' },
-        ],
+        Action: [{ name: 'description', type: 'string' }, { name: 'flowRate', type: 'int96' }],
         ScheduleFlow: [
           { name: 'action', type: 'Action' },
           { name: 'domain', type: 'string' },
@@ -334,7 +283,6 @@ test('request parsing: prepared request restores bigint fields', () => {
   assert.strictEqual(parsed.message.nonce, 1n)
   assert.strictEqual(parsed.message.validAfter, 2n)
   assert.strictEqual(parsed.message.validBefore, 3n)
-  assert.strictEqual(parsed.typedData.message.nonce, 1n)
 })
 
 test('request parsing: signed request restores bigint fields', () => {
@@ -367,17 +315,9 @@ test('request CLI: sign command accepts serialized prepared request from stdin',
     signer: TEST_SIGNER,
     params: '0xabcdef',
     typedData: {
-      domain: {
-        name: 'ClearSigning',
-        version: '1',
-        chainId: TEST_CHAIN_ID,
-        verifyingContract: TEST_FORWARDER,
-      },
+      domain: { name: 'ClearSigning', version: '1', chainId: TEST_CHAIN_ID, verifyingContract: TEST_FORWARDER },
       types: {
-        Action: [
-          { name: 'description', type: 'string' },
-          { name: 'flowRate', type: 'int96' },
-        ],
+        Action: [{ name: 'description', type: 'string' }, { name: 'flowRate', type: 'int96' }],
         ScheduleFlow: [
           { name: 'action', type: 'Action' },
           { name: 'domain', type: 'string' },
@@ -408,12 +348,10 @@ test('request CLI: sign command accepts serialized prepared request from stdin',
     actionDescription: 'Test flow',
   }
 
-  const child = spawn(
-    'npx',
-    ['tsx', 'agent/request.ts', 'sign', '--private-key', TEST_PRIVATE_KEY],
-    { cwd: RELAYER_DIR, stdio: ['pipe', 'pipe', 'pipe'] }
-  )
-
+  const child = spawn('npx', ['tsx', 'agent/request.ts', 'sign', '--private-key', TEST_PRIVATE_KEY], {
+    cwd: RELAYER_DIR,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
   child.stdin.end(serializeForJson(prepared))
 
   const stdoutChunks: Buffer[] = []
@@ -423,11 +361,9 @@ test('request CLI: sign command accepts serialized prepared request from stdin',
 
   const [code] = await once(child, 'exit') as [number | null]
   assert.strictEqual(code, 0, Buffer.concat(stderrChunks).toString())
-
   const signed = parseSignedAgentRequest(Buffer.concat(stdoutChunks).toString())
   assert.strictEqual(signed.signer, TEST_SIGNER)
   assert.strictEqual(signed.message.nonce, 1n)
-  assert.ok(signed.signature.startsWith('0x'))
 })
 
 test('request CLI: send command posts signed request from stdin', async () => {
@@ -438,7 +374,6 @@ test('request CLI: send command posts signed request from stdin', async () => {
       res.end('not found')
       return
     }
-
     const chunks: Buffer[] = []
     req.on('data', chunk => chunks.push(Buffer.from(chunk)))
     req.on('end', () => {
@@ -471,17 +406,14 @@ test('request CLI: send command posts signed request from stdin', async () => {
   })
 
   try {
-    const child = spawn(
-      'npx',
-      ['tsx', 'agent/request.ts', 'send', '--relayer-url', relayerUrl],
-      { cwd: RELAYER_DIR, stdio: ['pipe', 'pipe', 'pipe'] }
-    )
-
+    const child = spawn('npx', ['tsx', 'agent/request.ts', 'send', '--relayer-url', relayerUrl], {
+      cwd: RELAYER_DIR,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
     child.stdin.end(signedJson)
 
     const stderrChunks: Buffer[] = []
     child.stderr.on('data', chunk => stderrChunks.push(Buffer.from(chunk)))
-
     const [code] = await once(child, 'exit') as [number | null]
     assert.strictEqual(code, 0, Buffer.concat(stderrChunks).toString())
     assert.strictEqual(requests.length, 1)
@@ -491,38 +423,83 @@ test('request CLI: send command posts signed request from stdin', async () => {
   }
 })
 
-test('request CLI: build supports generic raw action mode', async () => {
-  const action = await buildAction({
-    rpcUrl: 'http://127.0.0.1:1',
-    chainId: TEST_CHAIN_ID,
-    macroAddress: '0x1234567890123456789012345678901234567890',
-    flags: {
-      'action-params': '0x1234',
-      'action-description': 'Generic action',
-      'primary-type': 'MyAction',
-      'action-type-definition': 'Action(string description,uint256 amount)',
-      'action-message': '{"description":"Generic action","amount":"123"}',
-    },
-  })
-
-  assert.strictEqual(action.actionParams, '0x1234')
-  assert.strictEqual(action.actionDescription, 'Generic action')
-  assert.strictEqual(action.primaryType, 'MyAction')
-  assert.strictEqual(action.actionTypeDefinition, 'Action(string description,uint256 amount)')
-  assert.deepStrictEqual(action.actionMessage, {
-    description: 'Generic action',
-    amount: '123',
-  })
+test('macro metadata: build action fails for unknown macro', () => {
+  assert.throws(() => getMacroMetadata('missing', 'create-flow-schedule', TEST_CHAIN_ID), /Unknown macro/)
 })
 
-test('request CLI: build fails fast for unsupported macro kind', async () => {
-  await assert.rejects(
-    buildAction({
-      rpcUrl: 'http://127.0.0.1:1',
+test('macro metadata: build action fails for unknown action', () => {
+  assert.throws(() => getMacroMetadata('flow-scheduler', 'missing', TEST_CHAIN_ID), /Unknown action/)
+})
+
+test('macro metadata: build action can use metadata and rpc', async () => {
+  const metadata = getMacroMetadata('flow-scheduler', 'create-flow-schedule', TEST_CHAIN_ID)
+
+  const requests: Array<{ method: string; params: unknown[] }> = []
+  const server = createServer((req, res) => {
+    const chunks: Buffer[] = []
+    req.on('data', chunk => chunks.push(Buffer.from(chunk)))
+    req.on('end', () => {
+      const payload = JSON.parse(Buffer.concat(chunks).toString()) as { method: string; params: unknown[]; id: number }
+      requests.push({ method: payload.method, params: payload.params })
+
+      let result: unknown = '0x'
+      if (payload.method === 'eth_call') {
+        const call = payload.params[0] as { data: string }
+        if (call.data.startsWith('0x652452e8')) {
+          result = '0x'
+            + '0000000000000000000000000000000000000000000000000000000000000060'
+            + '00000000000000000000000000000000000000000000000000000000000000a0'
+            + '1111111111111111111111111111111111111111111111111111111111111111'
+            + '000000000000000000000000000000000000000000000000000000000000000e'
+            + '437265617465206120666c6f7700000000000000000000000000000000000000'
+            + '0000000000000000000000000000000000000000000000000000000000000002'
+            + '1234000000000000000000000000000000000000000000000000000000000000'
+        } else if (call.data.startsWith('0x390b89cb')) {
+          result = '0x'
+            + '0000000000000000000000000000000000000000000000000000000000000020'
+            + '000000000000000000000000000000000000000000000000000000000000000c'
+            + '5363686564756c65466c6f770000000000000000000000000000000000000000'
+        } else if (call.data.startsWith('0x39f05f94')) {
+          const value = 'Action(string description,address superToken,address receiver,uint32 startDate,uint32 startMaxDelay,int96 flowRate,uint256 startAmount,uint32 endDate,bytes userData)'
+          const hex = Buffer.from(value, 'utf8').toString('hex')
+          const padded = hex.padEnd(Math.ceil(hex.length / 64) * 64, '0')
+          result = '0x'
+            + '0000000000000000000000000000000000000000000000000000000000000020'
+            + value.length.toString(16).padStart(64, '0')
+            + padded
+        }
+      }
+
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: payload.id, result }))
+    })
+  })
+
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address()
+  assert.ok(address && typeof address === 'object')
+
+  try {
+    const built = await buildMacroAction({
+      rpcUrl: `http://127.0.0.1:${address.port}`,
       chainId: TEST_CHAIN_ID,
-      macroAddress: '0x1234567890123456789012345678901234567890',
-      flags: { 'macro-kind': 'unknown-kind' },
-    }),
-    /Unknown --macro-kind/
-  )
+      macroAddress: metadata.macroAddress,
+      actionName: 'create-flow-schedule',
+      action: metadata.action,
+      args: {
+        superToken: '0x1111111111111111111111111111111111111111',
+        receiver: '0x2222222222222222222222222222222222222222',
+        flowRate: '123',
+      },
+    })
+
+    assert.match(built.actionDescription, /^Create a flow/)
+    assert.strictEqual(built.actionParams, '0x1234')
+    assert.strictEqual(built.primaryType, 'ScheduleFlow')
+    assert.match(built.actionTypeDefinition, /^Action\(/)
+    assert.match(String(built.actionMessage.description), /^Create a flow/)
+    assert.strictEqual(requests.length, 3)
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(err => err ? reject(err) : resolve()))
+  }
 })

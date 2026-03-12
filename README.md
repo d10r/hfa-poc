@@ -1,63 +1,56 @@
 # ClearSigning Relayer
 
-Minimal relayer for EIP-712 signed transaction intents. Accepts a signed payload and submits `ClearSigningMacroForwarder.runMacro(macro, params, signer, signature)` on behalf of a configured relayer account.
+Minimal relayer for EIP-712 signed transaction intents.
 
-Also includes a **Push Notification Service** for sending actionable notifications to registered devices, with **Agent Relay** support for transaction requestApproval.
+It accepts a signed payload and submits `ClearSigningMacroForwarder.runMacro(macro, params, signer, signature)` on behalf of a configured relayer account.
+
+It also includes:
+
+- push notifications with accept/reject actions
+- device pairing to agent addresses
+- a small PWA for device registration
+- SQLite persistence for requests and notifications
 
 ## Features
 
-- Relay EIP-712 signed transaction intents
-- Push notifications with Accept/Reject actions
-- Agent pairing: link devices to agent addresses
-- PWA web app for device registration
-- SQLite persistence for device subscriptions and notification history
+- relay EIP-712 signed macro intents
+- pair devices with agent addresses
+- send actionable push notifications
+- execute approved requests from notification responses
+- build agent requests from metadata-driven macro definitions
 
 ## Setup
 
-### 1. Install Dependencies
+### 1. Install
 
 ```bash
 npm install
 ```
 
-### 2. Generate VAPID Keys
+### 2. Generate VAPID keys
 
 ```bash
 npm run generate-vapid
 ```
 
-This outputs something like:
-```
-VAPID_PUBLIC_KEY=BC...
-VAPID_PRIVATE_KEY=...
-```
-
-### 3. Configure Environment
+### 3. Configure environment
 
 Copy `.env.example` to `.env` and set:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `RELAYER_PRIVKEY` | yes | Relayer EOA private key (hex, with or without `0x`) |
-| `RELAYER_RPC_URL` | yes | RPC URL for the chain |
+| `RELAYER_PRIVKEY` | yes | Relayer EOA private key |
+| `RELAYER_RPC_URL` | yes | RPC URL for the relayer chain |
 | `RELAYER_CLEAR_SIGNING_MACRO_FORWARDER_ADDRESS` | yes | ClearSigningMacroForwarder contract address |
-| `HOST` | no | Host to bind to (default: `localhost`) |
-| `PORT` | no | HTTP port (default 3000) |
-| `CORS_ORIGIN` | no | If set, only this origin is allowed for CORS; if unset, all origins are allowed |
-| `VAPID_PUBLIC_KEY` | yes* | VAPID public key for push notifications |
-| `VAPID_PRIVATE_KEY` | yes* | VAPID private key for push notifications |
-| `VAPID_SUBJECT` | no | VAPID subject (default: `mailto:noreply@example.com`) |
-| `DATABASE_PATH` | no | SQLite database path (default: `./data.db`) |
+| `VAPID_PUBLIC_KEY` | yes* | Web push VAPID public key |
+| `VAPID_PRIVATE_KEY` | yes* | Web push VAPID private key |
+| `HOST` | no | HTTP host, default `localhost` |
+| `PORT` | no | HTTP port, default `3000` |
+| `DATABASE_PATH` | no | SQLite path, default `./data.db` |
 
-*Required for push notifications to work.
+`*` required for push notifications.
 
 ## Run
-
-```bash
-npm start
-```
-
-Dev with watch:
 
 ```bash
 npm run dev
@@ -69,36 +62,37 @@ Build:
 npm run build
 ```
 
+Typecheck:
+
+```bash
+npm run typecheck
+```
+
 ## API
 
-### Relay Endpoints
+### Relay
 
-#### POST /relay
+#### `POST /relay`
 
-Submit a relay request. Body (JSON):
+Body:
 
-- `macro` (string, required): Macro contract address
-- `params` (string): `0x`-prefixed hex of the full payload for `runMacro`
-- `signer` (string): Signer address (EOA or contract)
-- `signature` (string): `0x`-prefixed hex
+```json
+{
+  "macro": "0x...",
+  "params": "0x...",
+  "signer": "0x...",
+  "signature": "0x..."
+}
+```
 
 Response: `{ id, txHash, status, receipt?, error? }`
 
-#### GET /relay
+### Agent relay
 
-List all relay records.
-
-#### GET /relay/:id
-
-Get a specific relay record.
-
-### Agent Relay Endpoints
-
-#### POST /agent-relay
-
-Submit a transaction request from an agent. Sends push notification to all devices paired with the agent (signer address).
+#### `POST /agent-relay`
 
 Body:
+
 ```json
 {
   "forwarderAddress": "0x...",
@@ -106,305 +100,190 @@ Body:
   "signer": "0x...",
   "signature": "0x...",
   "params": "0x...",
-  "message": { ... },
-  "actionDescription": "Create flow schedule of 10 USDCx/day to 0x..."
+  "message": { "...": "..." },
+  "actionDescription": "Create flow schedule ..."
 }
 ```
 
 Response: `{ id, agentAddress, devicesNotified, createdAt }`
 
-#### GET /pending-requests
+#### `GET /pending-requests`
 
-List all pending transaction requests. Optional query param: `?agent=0x...`
+List pending requests. Optional query param: `?agent=0x...`
 
-#### GET /pending-requests/:id
+#### `GET /pending-requests/:id`
 
-Get a specific pending request.
+Get one pending request.
 
-#### GET /pairing-info?agent=0x...
+#### `GET /pairing-info?agent=0x...`
 
-Get pairing info for an agent address.
+Get pairing info for an agent.
 
-### Push Notification Endpoints
+### Push notifications
 
-#### GET /vapid-public-key
+#### `GET /vapid-public-key`
 
-Returns the VAPID public key needed for client-side push subscription.
+Returns `{ publicKey }`
 
-Response: `{ publicKey: string }`
+#### `POST /devices`
 
-#### POST /devices
+Registers a device.
 
-Register a device for push notifications.
+#### `GET /devices`
 
-Body:
-```json
-{
-  "subscription": {
-    "endpoint": "https://...",
-    "keys": {
-      "p256dh": "...",
-      "auth": "..."
-    }
-  },
-  "agentAddress": "0x..."  // optional: pair device with agent
-}
-```
+Lists devices.
 
-Response: `{ id, agentAddress, createdAt }`
+#### `DELETE /devices/:id`
 
-#### GET /devices
+Unregisters a device.
 
-List all registered devices.
+#### `GET /notifications`
 
-#### GET /devices/:id
+Lists notifications. Optional query param: `?deviceId=...`
 
-Get a specific device.
+#### `POST /response`
 
-#### DELETE /devices/:id
+Records a notification response and executes the request on accept.
 
-Unregister a device.
+## Web app
 
-#### POST /notify
+The root URL `/` provides:
 
-Send a push notification to a device.
+1. device registration
+2. pairing with `/?agent=0x...`
+3. notification history
 
-Body:
-```json
-{
-  "deviceId": "uuid-of-device",
-  "message": "Approve transaction?"
-}
-```
+## Agent harness
 
-Response: `{ id, createdAt }`
+The `agent/` directory contains a generic request CLI plus reusable helpers.
 
-The notification has Accept and Reject buttons.
+### Metadata-driven requests
 
-#### GET /notifications
+Macros are defined in `agent/macros/*.json`.
 
-List all notifications. Optional query param: `?deviceId=uuid`
-
-#### GET /notifications/:id
-
-Get a specific notification with its response status.
-
-Response:
-```json
-{
-  "id": "uuid",
-  "deviceId": "uuid",
-  "message": "Approve transaction?",
-  "response": "accepted",  // or "rejected" or null
-  "createdAt": 1234567890,
-  "respondedAt": 1234567891
-}
-```
-
-#### POST /response
-
-Record a user's response to a notification. Called by the service worker.
-
-Body:
-```json
-{
-  "notificationId": "uuid",
-  "response": "accepted"  // or "rejected"
-}
-```
-
-## Web App
-
-Access the web app at the root URL (`/`). It provides:
-
-1. **Device Registration**: Request push notification permission and register the device
-2. **Agent Pairing**: Open `/?agent=0x...` to pair device with an agent
-3. **Notification History**: View received notifications and their response status
-
-## Agent Harness
-
-The `agent/` directory contains modular scripts for signing and submitting transaction requests.
-
-### request.ts
-
-The CLI supports separate build/sign/send steps in two pragmatic modes:
-
-- `flow-scheduler` helper mode: convenient flags for the current FlowScheduler macro
-- raw action mode: pass already-encoded action params and typed-data metadata for any macro
+The CLI is generic:
 
 ```bash
-# One-shot submit with FlowScheduler helper mode
 npx tsx agent/request.ts submit \
+  --macro flow-scheduler \
+  --action create-flow-schedule \
+  --args '{"superToken":"0x...","receiver":"0x...","flowRate":"11574074074074"}' \
   --private-key 0x... \
   --rpc-url https://optimism-sepolia.rpc.x.superfluid.dev \
-  --chain-id 11155420 \
-  --forwarder 0x712F1ccD0472025EC75bB67A92AA6406cDA0031D \
-  --macro 0x... \
-  --super-token 0x... \
-  --receiver 0x... \
-  --flow-rate 11574074074074 \
   --relayer-url http://localhost:3000
+```
 
-# Build only with FlowScheduler helper mode
+Build only:
+
+```bash
 npx tsx agent/request.ts build \
-  --rpc-url ... \
-  --forwarder 0x... \
-  --macro 0x... \
-  --super-token 0x... \
-  --receiver 0x... \
-  --flow-rate 11574074074074
-
-# Build only with signer auto-derived from private key
-PRIVATE_KEY=0x... npx tsx agent/request.ts build \
-  --rpc-url ... \
-  --forwarder 0x... \
-  --macro 0x... \
-  --super-token 0x... \
-  --receiver 0x... \
-  --flow-rate 11574074074074
-
-# Sign prepared JSON (from stdin)
-... build ... | npx tsx agent/request.ts sign --private-key 0x...
-
-# Send signed JSON (from stdin)
-... sign ... | npx tsx agent/request.ts send --relayer-url http://localhost:3000
-
-# Dry-run (build + sign, output JSON without sending)
-npx tsx agent/request.ts submit --dry-run \
+  --macro flow-scheduler \
+  --action create-flow-schedule \
+  --args '{"superToken":"0x...","receiver":"0x...","flowRate":"11574074074074"}' \
   --private-key 0x... \
-  --rpc-url ... \
-  --super-token 0x... \
-  --receiver 0x... \
-  --flow-rate 11574074074074
+  --rpc-url https://optimism-sepolia.rpc.x.superfluid.dev
 ```
 
-Options:
-- `--private-key`: Agent's private key (or set `PRIVATE_KEY` env)
-- `--rpc-url`: RPC URL (or set `RPC_URL` env)
-- `--chain-id`: Chain ID (default: 11155420 for OP Sepolia)
-- `--forwarder`: ClearSigningMacroForwarder address (auto-configured from chain config)
-- `--macro`: Macro contract address (auto-configured from chain config)
-- `--macro-kind`: Builder mode (default: `flow-scheduler`)
-- `--relayer-url`: Relayer API URL (default: http://localhost:3000)
-- `--signer`: Signer address (auto-derived from private key if not provided)
-- `--action-params`: Pre-encoded macro action params for generic mode
-- `--action-description`: Human-readable action description for generic mode
-- `--primary-type`: EIP-712 primary type for generic mode
-- `--action-type-definition`: EIP-712 `Action(...)` struct definition for generic mode
-- `--action-message`: JSON object for the action payload in generic mode
-- `--super-token`: SuperToken address
-- `--receiver`: Receiver address
-- `--flow-rate`: Flow rate in wei per second
-- `--start-date`: Start date (unix timestamp, default: 1 hour from now)
-- `--end-date`: End date (unix timestamp, default: 0 = indefinite)
-- `--start-max-delay`: Max delay for start in seconds (default: 86400)
-- `--start-amount`: Initial transfer amount in wei (default: 0)
-- `--user-data`: User data bytes (default: 0x)
-- `--domain`: Security domain (default: flowscheduler.xyz)
-- `--provider`: Security provider (default: macros.superfluid.eth)
-- `--valid-after`: Valid after timestamp (default: 0)
-- `--valid-before`: Valid before timestamp (default: 0)
-- `--nonce-key`: Nonce key (default: 0)
-- `--dry-run`: Only output JSON, don't send to relayer
+Sign prepared JSON from stdin:
 
-### Module Architecture
+```bash
+... build ... | npx tsx agent/request.ts sign --private-key 0x...
+```
 
-The agent code is split into modular components:
+Send signed JSON from stdin:
 
-- **`request.ts`**: CLI entry point (build/sign/send/submit commands)
-- **`actionBuilders.ts`**: Minimal action builder selection and raw-action support
-- **`clearSigning.ts`**: Generic ClearSigning forwarder helper
-- **`flowScheduler.ts`**: FlowScheduler-specific action builder
-- **`relayClient.ts`**: HTTP client for submitting to relayer
-- **`config.ts`**: Chain addresses and security configuration
-- **`chain.ts`**: Shared chain metadata helper
+```bash
+... sign ... | npx tsx agent/request.ts send --relayer-url http://localhost:3000
+```
 
-## Usage Example
+### CLI options
 
-### 1. Pair Device with Agent
+- `--macro`: macro metadata name, e.g. `flow-scheduler`
+- `--action`: action name, e.g. `create-flow-schedule`
+- `--args`: JSON object with action arguments
+- `--private-key`: signer key, or `PRIVATE_KEY`
+- `--rpc-url`: RPC URL, or `RPC_URL`
+- `--chain-id`: chain id, default `11155420`
+- `--forwarder`: forwarder override; otherwise use signer config
+- `--relayer-url`: relayer URL, default `http://localhost:3000`
+- `--signer`: signer address override
+- `--domain`: security domain override
+- `--provider`: security provider override
+- `--valid-after`: valid-after timestamp
+- `--valid-before`: valid-before timestamp
+- `--nonce-key`: nonce key
+- `--dry-run`: build and sign only
 
-1. Open the web app with agent parameter: `http://localhost:3000/?agent=0xABC...`
-2. Click "Register for Push Notifications"
-3. Device is now paired with that agent
+### Metadata conventions
 
-### 2. Send Transaction Request (as Agent)
+Each macro JSON defines:
 
-FlowScheduler helper mode:
+- per-chain macro addresses
+- optional default security domain
+- actions with:
+  - optional `context`
+  - required `fields`
+
+Field specs are short strings such as:
+
+- `address`
+- `int96`
+- `uint32=86400`
+- `uint32=now+3600`
+- `bytes=0x`
+- `bytes32:en`
+
+The runtime uses convention over metadata repetition:
+
+- action `create-flow-schedule` -> encode function `encodeCreateFlowScheduleParams`
+- encode inputs = context values + one final tuple of action fields
+- typed data metadata comes from the macro contract itself:
+  - `getPrimaryTypeName(params)`
+  - `getActionTypeDefinition(params)`
+- action message = `{ description, ...fields }`
+
+## Usage example
+
+1. Open `http://localhost:3000/?agent=0xABC...`
+2. Register push notifications
+3. Submit from the agent:
 
 ```bash
 npx tsx agent/request.ts submit \
+  --macro flow-scheduler \
+  --action create-flow-schedule \
+  --args '{"superToken":"0x4eab9f84a4864325b48a30a3cf89f14672bcc752","receiver":"0x...","flowRate":"1000000000000000"}' \
   --private-key $AGENT_PRIVKEY \
-  --rpc-url https://optimism-sepolia.rpc.x.superfluid.dev \
-  --chain-id 11155420 \
-  --forwarder 0x712F1ccD0472025EC75bB67A92AA6406cDA0031D \
-  --macro 0x7b043b577A10b06296FE0bD0402F5025d97A3839 \
-  --super-token 0x4eab9f84a4864325b48a30a3cf89f14672bcc752 \
-  --receiver 0x... \
-  --flow-rate 1000000000000000
+  --rpc-url https://optimism-sepolia.rpc.x.superfluid.dev
 ```
 
-Generic raw action mode:
-
-```bash
-npx tsx agent/request.ts submit \
-  --private-key $AGENT_PRIVKEY \
-  --rpc-url https://optimism-sepolia.rpc.x.superfluid.dev \
-  --chain-id 11155420 \
-  --forwarder 0x712F1ccD0472025EC75bB67A92AA6406cDA0031D \
-  --macro 0xYOUR_MACRO \
-  --action-params 0xENCODED_PARAMS \
-  --action-description "Execute macro action" \
-  --primary-type MyAction \
-  --action-type-definition 'Action(string description,uint256 amount)' \
-  --action-message '{"description":"Execute macro action","amount":"123"}'
-```
-
-### 3. Respond to Notification
-
-When the notification appears on the paired device, tap Accept or Reject. The response is recorded.
-
-### 4. Check Pending Request
-
-```bash
-curl http://localhost:3000/pending-requests/REQUEST-ID
-```
+4. Accept or reject on the paired device
 
 ## Notes
 
-- Push notifications require HTTPS in production (localhost works for development)
-- Service worker must be registered for push notifications to work
-- Responses are stored in SQLite and persist across restarts
-- For FlowScheduler macro, ensure the signer has granted flow permissions to the FlowScheduler contract
-- Default chain is Optimism Sepolia (chain ID 11155420)
-- Default forwarder: `0x712F1ccD0472025EC75bB67A92AA6406cDA0031D` (ClearSigningMacroForwarder)
+- push notifications need HTTPS in production
+- localhost works for local development
+- responses persist in SQLite
+- forwarder address is signer config, not macro metadata
+- default chain is Optimism Sepolia
+- default forwarder is `0x712F1ccD0472025EC75bB67A92AA6406cDA0031D`
 
 ## Testing
 
-Run all tests:
+Run everything:
 
 ```bash
 npm test
 ```
 
-Run only signer tests:
+Signer-focused tests:
 
 ```bash
 npm test -- test/signer.test.ts
 ```
 
-Run only relayer integration tests:
+Relayer integration tests:
 
 ```bash
 npm test -- test/agent-relay.test.ts
 ```
-# Build only with generic raw action mode
-npx tsx agent/request.ts build \
-  --rpc-url ... \
-  --forwarder 0x... \
-  --macro 0x... \
-  --action-params 0x... \
-  --action-description "Do something" \
-  --primary-type MyAction \
-  --action-type-definition 'Action(string description,uint256 amount)' \
-  --action-message '{"description":"Do something","amount":"123"}' \
-  --private-key 0x...
