@@ -51,8 +51,30 @@ export interface AgentRelayRequest {
   actionDescription?: string
 }
 
+export interface ContractCallIntent {
+  protocol: string
+  action: string
+  chainId: number
+  to: string
+  data: string
+  value: string
+  description?: string
+  args: Record<string, unknown>
+}
+
+export interface AgentIntentRequest {
+  requestKind: 'contract_call'
+  signatureKind: 'eip712' | 'personal_sign'
+  signer: string
+  signature: string
+  intent: ContractCallIntent
+  message: Record<string, unknown>
+  actionDescription?: string
+}
+
 export interface PendingRequest {
   id: string
+  requestKind: 'macro' | 'contract_call'
   agentAddress: string
   forwarderAddress: string
   macroAddress: string
@@ -61,6 +83,7 @@ export interface PendingRequest {
   signature: string
   message: string
   actionDescription: string | null
+  execution: string | null
   status: 'pending' | 'accepted' | 'rejected' | 'executing' | 'succeeded' | 'failed'
   notificationCount: number
   response: 'accepted' | 'rejected' | null

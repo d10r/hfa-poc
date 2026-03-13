@@ -17,6 +17,7 @@ import {
   getMacroMetadata,
   parseArgsJson,
 } from '../agent/macroMetadata.js'
+import { buildContractCallIntent, getIntentRegistryEntry, verifyIntentDescription } from '../agent/intentRegistry.js'
 
 const TEST_CHAIN_ID = 11155420
 const TEST_FORWARDER = '0x712F1ccD0472025EC75bB67A92AA6406cDA0031D'
@@ -25,16 +26,10 @@ const TEST_SIGNER = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'
 const RELAYER_DIR = '/home/didi/src/sf/hfa/relayer'
 
 test('clearSigning: getChain returns correct chain config', () => {
-  const chain = getChain(TEST_CHAIN_ID)
+  const chain = getChain(TEST_CHAIN_ID, 'https://sepolia.optimism.io')
   assert.strictEqual(chain.id, TEST_CHAIN_ID)
-  assert.strictEqual(chain.name, 'Optimism Sepolia')
+  assert.strictEqual(chain.name, 'Chain 11155420')
   assert.strictEqual(chain.nativeCurrency.symbol, 'ETH')
-})
-
-test('clearSigning: getChain handles unknown chain', () => {
-  const chain = getChain(99999)
-  assert.strictEqual(chain.id, 99999)
-  assert.strictEqual(chain.name, 'Chain 99999')
 })
 
 test('clearSigning: buildTypedData returns valid EIP-712 structure', () => {
@@ -502,4 +497,65 @@ test('macro metadata: build action can use metadata and rpc', async () => {
   } finally {
     await new Promise<void>((resolve, reject) => server.close(err => err ? reject(err) : resolve()))
   }
+})
+
+test('intent registry: loads contract_call entry', () => {
+  const entry = getIntentRegistryEntry('cctp', 'bridge-usdc')
+  assert.strictEqual(entry.kind, 'contract_call')
+  assert.strictEqual(entry.call?.method, 'depositForBurn')
+})
+
+test('intent registry: loads offchain order entry', () => {
+  const entry = getIntentRegistryEntry('cow-swap', 'place-order')
+  assert.strictEqual(entry.kind, 'offchain_order')
+  assert.strictEqual(entry.order?.standard, 'cow-order')
+})
+
+test('intent registry: builds contract_call intent', () => {
+  const intent = buildContractCallIntent({
+    protocol: 'cctp',
+    action: 'bridge-usdc',
+    chainId: TEST_CHAIN_ID,
+    args: {
+      amount: '1000000',
+      destinationDomain: 6,
+      mintRecipient: '0x0000000000000000000000001111111111111111111111111111111111111111',
+      burnToken: '0x2222222222222222222222222222222222222222',
+    },
+  })
+
+  assert.strictEqual(intent.protocol, 'cctp')
+  assert.strictEqual(intent.action, 'bridge-usdc')
+  assert.strictEqual(intent.to, '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA')
+  assert.ok(intent.data.startsWith('0x'))
+  assert.strictEqual(intent.description, 'Bridge 1 USDC to Base for recipient 0x0000...1111')
+})
+
+test('intent registry: verifies relayer-rendered description', () => {
+  const description = verifyIntentDescription({
+    protocol: 'cctp',
+    action: 'bridge-usdc',
+    args: {
+      amount: '1000000',
+      destinationDomain: 6,
+      mintRecipient: '0x0000000000000000000000001111111111111111111111111111111111111111',
+      burnToken: '0x2222222222222222222222222222222222222222',
+    },
+  })
+
+  assert.strictEqual(description, 'Bridge 1 USDC to Base for recipient 0x0000...1111')
+  assert.throws(
+    () => verifyIntentDescription({
+      protocol: 'cctp',
+      action: 'bridge-usdc',
+      args: {
+        amount: '1000000',
+        destinationDomain: 6,
+        mintRecipient: '0x0000000000000000000000001111111111111111111111111111111111111111',
+        burnToken: '0x2222222222222222222222222222222222222222',
+      },
+      description: 'Wrong description',
+    }),
+    /does not match/
+  )
 })

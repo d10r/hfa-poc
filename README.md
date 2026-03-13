@@ -157,6 +157,11 @@ The root URL `/` provides:
 
 The `agent/` directory contains a generic request CLI plus reusable helpers.
 
+There are now two PoC flows:
+
+- macro-based clear-signing requests
+- registry-driven arbitrary contract-call intents
+
 ### Metadata-driven requests
 
 Macros are defined in `agent/macros/*.json`.
@@ -287,3 +292,45 @@ Relayer integration tests:
 ```bash
 npm test -- test/agent-relay.test.ts
 ```
+
+## Arbitrary intent PoC
+
+This PoC adds a second path that does not require a macro.
+
+Instead, an agent submits a registry-backed intent describing an arbitrary protocol action. The relayer stores the preview text, sends the same notification flow, and executes a direct contract call when the user accepts.
+
+Implemented execution kind:
+
+- `contract_call`
+
+Registry examples:
+
+- `agent/intents/cctp.json` - executable PoC example
+- `agent/intents/cow-swap.json` - builder-only example for an offchain order action
+
+### Build and submit a contract-call intent
+
+```bash
+npx tsx agent/intentRequest.ts submit \
+  --protocol cctp \
+  --action bridge-usdc \
+  --args '{"amount":"1000000","destinationDomain":6,"mintRecipient":"0x0000000000000000000000001111111111111111111111111111111111111111","burnToken":"0x2222222222222222222222222222222222222222"}' \
+  --private-key 0x... \
+  --rpc-url https://optimism-sepolia.rpc.x.superfluid.dev \
+  --relayer-url http://localhost:3000
+```
+
+### Build a candidate registry entry with Venice
+
+```bash
+VENICE_INFERENCE_KEY=... npm run build-intent-registry -- "provide a mapping for a cctp bridging action"
+```
+
+The generated file is written under `agent/generated-intents/` for human review.
+
+Notes:
+
+- this is intentionally a PoC and does not try to prove onchain that description and calldata match
+- the relayer recomputes the description and calldata from the registry before storing/executing the intent
+- TODO: for a production-grade version, the relayer should also fully verify the attached intent signature before accepting the request
+- CoW is included as a registry-builder example, but runtime execution is intentionally limited to direct contract calls for now

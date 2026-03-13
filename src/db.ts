@@ -47,6 +47,7 @@ function initTables(db: Database.Database): void {
 
     CREATE TABLE IF NOT EXISTS pending_requests (
       id TEXT PRIMARY KEY,
+      request_kind TEXT NOT NULL DEFAULT 'macro',
       agent_address TEXT NOT NULL,
       forwarder_address TEXT NOT NULL,
       macro_address TEXT NOT NULL,
@@ -55,6 +56,7 @@ function initTables(db: Database.Database): void {
       signature TEXT NOT NULL,
       message TEXT NOT NULL,
       action_description TEXT,
+      execution TEXT,
       status TEXT NOT NULL DEFAULT 'pending',
       notification_count INTEGER NOT NULL DEFAULT 0,
       response TEXT,
@@ -72,11 +74,13 @@ function initTables(db: Database.Database): void {
   `)
 
   ensureColumn(db, 'notifications', 'pending_request_id', 'TEXT')
+  ensureColumn(db, 'pending_requests', 'request_kind', "TEXT NOT NULL DEFAULT 'macro'")
   ensureColumn(db, 'pending_requests', 'status', "TEXT NOT NULL DEFAULT 'pending'")
   ensureColumn(db, 'pending_requests', 'notification_count', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn(db, 'pending_requests', 'tx_hash', 'TEXT')
   ensureColumn(db, 'pending_requests', 'error', 'TEXT')
   ensureColumn(db, 'pending_requests', 'executed_at', 'INTEGER')
+  ensureColumn(db, 'pending_requests', 'execution', 'TEXT')
 
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_notifications_pending_request ON notifications(pending_request_id);

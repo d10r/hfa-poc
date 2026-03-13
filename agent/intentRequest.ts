@@ -96,7 +96,6 @@ async function buildRequest(flags: Flags) {
       to: intent.to,
       data: intent.data,
       value: intent.value.toString(),
-      description: intent.description,
       args: intent.args,
     },
     message: {

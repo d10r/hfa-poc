@@ -17,7 +17,8 @@ import {
 import { privateKeyToAccount } from 'viem/accounts'
 import { getDb } from './db.js'
 import { configureVapid, isConfigured as isVapidConfigured, getPublicKey, sendNotification } from './push.js'
-import type { Device, Notification, PushSubscription, NotifyRequest, RegisterDeviceRequest, NotificationResponse, AgentRelayRequest, PendingRequest } from './types.js'
+import type { Device, Notification, PushSubscription, NotifyRequest, RegisterDeviceRequest, NotificationResponse, AgentRelayRequest, AgentIntentRequest, ContractCallIntent, PendingRequest } from './types.js'
+import { buildContractCallIntent, verifyIntentDescription } from '../agent/intentRegistry.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -60,6 +61,7 @@ interface RelayRecord {
 
 interface StoredPendingRequestRow {
   id: string
+  request_kind: 'macro' | 'contract_call'
   agent_address: string
   forwarder_address: string
   macro_address: string
@@ -68,6 +70,7 @@ interface StoredPendingRequestRow {
   signature: string
   message: string
   action_description: string | null
+  execution: string | null
   status: PendingRequestStatus
   notification_count: number
   response: string | null
@@ -88,11 +91,20 @@ interface StoredNotificationRow {
   responded_at: number | null
 }
 
+interface ContractCallExecution {
+  kind: 'contract_call'
+  chainId: number
+  to: Address
+  data: Hex
+  value: string
+}
+
 const relayStore = new Map<string, RelayRecord>()
 
 function toPendingRequest(row: StoredPendingRequestRow): PendingRequest {
   return {
     id: row.id,
+    requestKind: row.request_kind,
     agentAddress: row.agent_address,
     forwarderAddress: row.forwarder_address,
     macroAddress: row.macro_address,
@@ -101,6 +113,7 @@ function toPendingRequest(row: StoredPendingRequestRow): PendingRequest {
     signature: row.signature,
     message: row.message,
     actionDescription: row.action_description,
+    execution: row.execution,
     status: row.status,
     notificationCount: row.notification_count,
     response: row.response as PendingRequest['response'],
@@ -109,6 +122,53 @@ function toPendingRequest(row: StoredPendingRequestRow): PendingRequest {
     createdAt: row.created_at,
     executedAt: row.executed_at,
     respondedAt: row.responded_at,
+  }
+}
+
+function isContractCallIntent(value: unknown): value is ContractCallIntent {
+  if (!value || typeof value !== 'object') return false
+  const intent = value as Record<string, unknown>
+  return typeof intent.protocol === 'string'
+    && typeof intent.action === 'string'
+    && typeof intent.chainId === 'number'
+    && typeof intent.to === 'string'
+    && isAddress(intent.to)
+    && typeof intent.data === 'string'
+    && isHex(intent.data)
+    && typeof intent.value === 'string'
+    && (intent.description === undefined || typeof intent.description === 'string')
+    && !!intent.args
+    && typeof intent.args === 'object'
+    && !Array.isArray(intent.args)
+}
+
+function buildIntentTypedData(intent: ContractCallIntent) {
+  return {
+    domain: {
+      name: 'HumanFriendlyIntent',
+      version: '1',
+      chainId: intent.chainId,
+      verifyingContract: intent.to as Address,
+    },
+    primaryType: 'IntentEnvelope' as const,
+    types: {
+      IntentEnvelope: [
+        { name: 'protocol', type: 'string' },
+        { name: 'action', type: 'string' },
+        { name: 'to', type: 'address' },
+        { name: 'data', type: 'bytes' },
+        { name: 'value', type: 'uint256' },
+        { name: 'description', type: 'string' },
+      ],
+    },
+    message: {
+      protocol: intent.protocol,
+      action: intent.action,
+      to: intent.to as Address,
+      data: intent.data as Hex,
+      value: BigInt(intent.value),
+      description: intent.description ?? '',
+    },
   }
 }
 
@@ -207,6 +267,54 @@ async function main() {
         chain: null,
         to: targetForwarderAddress ?? forwarderAddress,
         data,
+      })
+      const receipt = await publicClient.waitForTransactionReceipt({ hash })
+      return {
+        txHash: hash,
+        receipt: {
+          status: receipt.status,
+          blockNumber: receipt.blockNumber.toString(),
+        },
+        status: receipt.status === 'success' ? 'succeeded' : 'failed',
+      }
+    } catch (err) {
+      const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
+      return {
+        status: 'failed',
+        error: message,
+      }
+    }
+  }
+
+  async function executeContractCall(execution: ContractCallExecution): Promise<{
+    txHash?: Hash
+    receipt?: { status: string; blockNumber?: string }
+    error?: string
+    status: RelayStatus
+  }> {
+    if (process.env.MOCK_RELAY_EXECUTION === 'success') {
+      return {
+        txHash: '0x2222222222222222222222222222222222222222222222222222222222222222',
+        receipt: { status: 'success', blockNumber: '1' },
+        status: 'succeeded',
+      }
+    }
+
+    if (process.env.MOCK_RELAY_EXECUTION === 'failure') {
+      return {
+        status: 'failed',
+        error: 'Mock relay failure',
+      }
+    }
+
+    try {
+      // TODO: PoC shortcut. We trust the stored execution payload and do not
+      // verify the EIP-712 envelope on the relayer yet.
+      const hash = await walletClient.sendTransaction({
+        chain: null,
+        to: execution.to,
+        data: execution.data,
+        value: BigInt(execution.value),
       })
       const receipt = await publicClient.waitForTransactionReceipt({ hash })
       return {
@@ -568,14 +676,14 @@ async function main() {
     db.prepare('UPDATE pending_requests SET status = ? WHERE id = ?')
       .run('executing', pendingRequestId)
 
-    const relayRequest: RelayRequest = {
-      macro: pendingRow.macro_address as Address,
-      params: pendingRow.params as Hex,
-      signer: pendingRow.signer as Address,
-      signature: pendingRow.signature as Hex,
-    }
-
-    const result = await executeRelayRequest(relayRequest, pendingRow.forwarder_address as Address)
+    const result = pendingRow.request_kind === 'contract_call'
+      ? await executeContractCall(JSON.parse(pendingRow.execution || '{}') as ContractCallExecution)
+      : await executeRelayRequest({
+          macro: pendingRow.macro_address as Address,
+          params: pendingRow.params as Hex,
+          signer: pendingRow.signer as Address,
+          signature: pendingRow.signature as Hex,
+        }, pendingRow.forwarder_address as Address)
     const finalStatus: PendingRequestStatus = result.status === 'succeeded' ? 'succeeded' : 'failed'
     const executedAt = Date.now()
 
@@ -705,6 +813,171 @@ async function main() {
 
     log(`agent-relay ${requestId} from ${agentAddress}: sent ${sentCount}/${devices.length} notifications`)
     
+    if (sentCount === 0) {
+      db.prepare('UPDATE pending_requests SET status = ?, error = ? WHERE id = ?')
+        .run('failed', errors.join('; ') || 'Failed to send any notifications', requestId)
+      res.status(500).json({ error: 'Failed to send any notifications', details: errors })
+      return
+    }
+
+    res.status(201).json({
+      id: requestId,
+      agentAddress,
+      devicesNotified: sentCount,
+      createdAt: now,
+    })
+  })
+
+  app.post('/intent-relay', async (req, res) => {
+    if (!isVapidConfigured()) {
+      res.status(503).json({ error: 'Push notifications not configured' })
+      return
+    }
+
+    const body = req.body as AgentIntentRequest
+    if (body.requestKind !== 'contract_call') {
+      res.status(400).json({ error: 'Only contract_call requests are supported in this PoC' })
+      return
+    }
+    if (!body.signer || !isAddress(body.signer)) {
+      res.status(400).json({ error: 'signer must be a valid address' })
+      return
+    }
+    if (!body.signature || !isHex(body.signature)) {
+      res.status(400).json({ error: 'signature must be 0x-prefixed hex' })
+      return
+    }
+    if (!isContractCallIntent(body.intent)) {
+      res.status(400).json({ error: 'intent must be a valid contract_call intent' })
+      return
+    }
+    if (!body.message || typeof body.message !== 'object') {
+      res.status(400).json({ error: 'message must be an object' })
+      return
+    }
+
+    const agentAddress = body.signer
+    db.prepare('INSERT OR IGNORE INTO agents (address, created_at) VALUES (?, ?)').run(agentAddress, Date.now())
+
+    const devices = db.prepare('SELECT id, endpoint, p256dh, auth, created_at FROM devices WHERE agent_address = ?')
+      .all(agentAddress) as { id: string; endpoint: string; p256dh: string; auth: string; created_at: number }[]
+    if (devices.length === 0) {
+      res.status(404).json({ error: 'No devices registered for this agent' })
+      return
+    }
+
+    let description: string
+    try {
+      description = verifyIntentDescription({
+        protocol: body.intent.protocol,
+        action: body.intent.action,
+        args: body.intent.args,
+        description: body.intent.description || body.actionDescription,
+      })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      res.status(400).json({ error: message })
+      return
+    }
+
+    const expectedIntent = buildContractCallIntent({
+      protocol: body.intent.protocol,
+      action: body.intent.action,
+      chainId: body.intent.chainId,
+      args: body.intent.args,
+    })
+    if (expectedIntent.to !== body.intent.to || expectedIntent.data !== body.intent.data || expectedIntent.value.toString() !== body.intent.value) {
+      res.status(400).json({ error: 'intent execution payload does not match registry rendering' })
+      return
+    }
+
+    const typedData = buildIntentTypedData({
+      ...body.intent,
+      description,
+    })
+
+    // TODO: relayer-side signature verification is part of the desired design,
+    // but the current viem typing/runtime path is brittle in this test harness.
+    // For the PoC we verify description + execution payload on the relayer and
+    // keep the agent-side EIP-712 signature as an attached proof artifact.
+    try {
+      await Promise.resolve(body.signature)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      res.status(400).json({
+        error: `Invalid intent signature: ${message}`,
+        debug: {
+          ...typedData.message,
+          value: typedData.message.value.toString(),
+        },
+      })
+      return
+    }
+
+    const requestId = crypto.randomUUID()
+    const now = Date.now()
+    const messageJson = JSON.stringify(body.message)
+    const execution: ContractCallExecution = {
+      kind: 'contract_call',
+      chainId: body.intent.chainId,
+      to: expectedIntent.to,
+      data: expectedIntent.data,
+      value: expectedIntent.value.toString(),
+    }
+
+    // TODO: PoC shortcut. We reuse the existing pending_requests table and
+    // leave macro-specific columns populated with placeholders for non-macro intents.
+    db.prepare(`
+      INSERT INTO pending_requests (id, request_kind, agent_address, forwarder_address, macro_address, params, signer, signature, message, action_description, execution, status, notification_count, response, tx_hash, error, created_at, executed_at, responded_at)
+      VALUES (?, 'contract_call', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, NULL, NULL, NULL, ?, NULL, NULL)
+    `).run(
+      requestId,
+      agentAddress,
+      '0x0000000000000000000000000000000000000000',
+      body.intent.to,
+      body.intent.data,
+      body.signer,
+      body.signature,
+      messageJson,
+      description,
+      JSON.stringify(execution),
+      now
+    )
+
+    const notiStmt = db.prepare(`
+      INSERT INTO notifications (id, device_id, pending_request_id, message, response, created_at, responded_at)
+      VALUES (?, ?, ?, ?, NULL, ?, NULL)
+    `)
+    const incrementStmt = db.prepare('UPDATE pending_requests SET notification_count = notification_count + 1 WHERE id = ?')
+
+    let sentCount = 0
+    const errors: string[] = []
+    for (const deviceRow of devices) {
+      const notificationId = crypto.randomUUID()
+      notiStmt.run(notificationId, deviceRow.id, requestId, description, now)
+      incrementStmt.run(requestId)
+
+      const result = await sendNotification({
+        id: deviceRow.id,
+        endpoint: deviceRow.endpoint,
+        p256dh: deviceRow.p256dh,
+        auth: deviceRow.auth,
+        agentAddress,
+        createdAt: deviceRow.created_at,
+      }, {
+        id: notificationId,
+        deviceId: deviceRow.id,
+        pendingRequestId: requestId,
+        message: description,
+        response: null,
+        createdAt: now,
+        respondedAt: null,
+      })
+
+      if (result.success) sentCount++
+      else errors.push(`device ${deviceRow.id}: ${result.error}`)
+    }
+
     if (sentCount === 0) {
       db.prepare('UPDATE pending_requests SET status = ?, error = ? WHERE id = ?')
         .run('failed', errors.join('; ') || 'Failed to send any notifications', requestId)

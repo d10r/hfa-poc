@@ -3,6 +3,9 @@ import assert from 'node:assert/strict'
 import { once } from 'node:events'
 import { spawn, type ChildProcessByStdio } from 'node:child_process'
 import type { Readable } from 'node:stream'
+import { hashTypedData } from 'viem'
+import { privateKeyToAccount } from 'viem/accounts'
+import type { Address, Hex } from 'viem'
 import { mkdtemp, rm } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
@@ -389,6 +392,104 @@ test('failed push marks request failed when no notification can be delivered', a
     assert.equal(pendingRequests.length, 1)
     assert.equal(pendingRequests[0].status, 'failed')
     assert.match(pendingRequests[0].error ?? '', /Mock push failure/)
+  } finally {
+    await server.cleanup()
+  }
+})
+
+test('accepting a contract_call intent executes and persists success', async () => {
+  const server = await startServer({ pushMode: 'success', relayMode: 'success' })
+
+  try {
+    const signer = privateKeyToAccount(BASE_PRIVATE_KEY)
+    const typedData = {
+      domain: {
+        name: 'HumanFriendlyIntent',
+        version: '1',
+        chainId: 11155420,
+        verifyingContract: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA' as Address,
+      },
+      primaryType: 'IntentEnvelope' as const,
+      types: {
+        IntentEnvelope: [
+          { name: 'protocol', type: 'string' },
+          { name: 'action', type: 'string' },
+          { name: 'to', type: 'address' },
+          { name: 'data', type: 'bytes' },
+          { name: 'value', type: 'uint256' },
+          { name: 'description', type: 'string' },
+        ],
+      },
+      message: {
+        protocol: 'cctp',
+        action: 'bridge-usdc',
+        to: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA' as Address,
+        data: '0x6fd3504e00000000000000000000000000000000000000000000000000000000000f4240000000000000000000000000000000000000000000000000000000000000000600000000000000000000000011111111111111111111111111111111111111110000000000000000000000002222222222222222222222222222222222222222' as Hex,
+        value: 0n,
+        description: 'Bridge 1 USDC to Base for recipient 0x0000...1111',
+      },
+    } as const
+    const signature = await signer.signTypedData(typedData)
+    const pairRes = await postJson<{ id: string }>(server.baseUrl, '/devices', {
+      subscription: {
+        endpoint: 'https://example.com/push/intent-1',
+        keys: {
+          p256dh: 'p256dh-intent-1',
+          auth: 'auth-intent-1',
+        },
+      },
+      agentAddress: BASE_ADDRESS,
+    })
+    assert.strictEqual(pairRes.status, 201)
+
+    const relayRes = await postJson<{ id: string; devicesNotified: number }>(server.baseUrl, '/intent-relay', {
+      requestKind: 'contract_call',
+      signatureKind: 'eip712',
+      signer: BASE_ADDRESS,
+      signature,
+      intent: {
+        protocol: 'cctp',
+        action: 'bridge-usdc',
+        chainId: 11155420,
+        to: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
+        data: typedData.message.data,
+        value: '0',
+        args: {
+          amount: '1000000',
+          destinationDomain: 6,
+          mintRecipient: '0x0000000000000000000000001111111111111111111111111111111111111111',
+          burnToken: '0x2222222222222222222222222222222222222222',
+        },
+      },
+      message: {
+        action: { description: 'Bridge 1 USDC to Base for recipient 0x0000...1111' },
+        typedDataHash: hashTypedData(typedData),
+      },
+      actionDescription: 'Bridge 1 USDC to Base for recipient 0x0000...1111',
+    })
+    if (relayRes.status !== 201) {
+      assert.fail(JSON.stringify(relayRes.body))
+    }
+    assert.strictEqual(relayRes.status, 201)
+    assert.strictEqual(relayRes.body.devicesNotified, 1)
+
+    const notifications = await getJson<Array<{ id: string; pendingRequestId: string }>>(server.baseUrl, '/notifications')
+    const notification = notifications[0]
+
+    const responseRes = await postJson<{ pendingRequest: { status: string; txHash: string | null; execution: string | null; requestKind: string } }>(
+      server.baseUrl,
+      '/response',
+      {
+        notificationId: notification.id,
+        response: 'accepted',
+      }
+    )
+
+    assert.strictEqual(responseRes.status, 200)
+    assert.strictEqual(responseRes.body.pendingRequest.requestKind, 'contract_call')
+    assert.strictEqual(responseRes.body.pendingRequest.status, 'succeeded')
+    assert.ok(responseRes.body.pendingRequest.txHash)
+    assert.ok(responseRes.body.pendingRequest.execution)
   } finally {
     await server.cleanup()
   }

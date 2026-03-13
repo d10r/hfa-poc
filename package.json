@@ -11,6 +11,7 @@
     "start": "node dist/app.js",
     "dev": "tsx watch src/app.ts",
     "generate-vapid": "tsx src/generate-vapid.ts",
+    "build-intent-registry": "tsx agent/intentBuilder.ts",
     "test": "tsx --test test/**/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
