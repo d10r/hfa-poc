@@ -1,0 +1,58 @@
+{
+  "protocol": "cctp",
+  "actions": {
+    "bridge-usdc": {
+      "kind": "contract_call",
+      "chains": {
+        "11155420": {
+          "to": "0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA"
+        }
+      },
+      "call": {
+        "method": "depositForBurn",
+        "abi": [
+          {
+            "type": "function",
+            "name": "depositForBurn",
+            "stateMutability": "nonpayable",
+            "inputs": [
+              { "name": "amount", "type": "uint256" },
+              { "name": "destinationDomain", "type": "uint32" },
+              { "name": "mintRecipient", "type": "bytes32" },
+              { "name": "burnToken", "type": "address" }
+            ],
+            "outputs": []
+          }
+        ],
+        "args": {
+          "amount": "uint256",
+          "destinationDomain": "uint32",
+          "mintRecipient": "bytes32",
+          "burnToken": "address"
+        }
+      },
+      "describe": {
+        "template": "Bridge {amount} to {destinationDomain} for recipient {mintRecipient}",
+        "fields": ["amount", "destinationDomain", "mintRecipient", "burnToken"],
+        "formats": {
+          "amount": "amount:6:usdc",
+          "destinationDomain": "domain",
+          "mintRecipient": "address",
+          "burnToken": "token"
+        }
+      },
+      "metadata": {
+        "symbols": {
+          "usdc": "USDC",
+          "0x2222222222222222222222222222222222222222": "USDC"
+        },
+        "labels": {
+          "0": "Ethereum",
+          "2": "OP Mainnet",
+          "3": "Arbitrum",
+          "6": "Base"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "protocol": "cow-swap",
+  "actions": {
+    "place-order": {
+      "kind": "offchain_order",
+      "order": {
+        "standard": "cow-order",
+        "fields": {
+          "sellToken": "address",
+          "buyToken": "address",
+          "sellAmount": "uint256",
+          "buyAmount": "uint256",
+          "validTo": "uint32",
+          "receiver": "address",
+          "kind": "string"
+        }
+      },
+      "describe": {
+        "template": "Swap up to {sellAmount} of {sellToken} for at least {buyAmount} of {buyToken} before {validTo}",
+        "fields": ["sellAmount", "sellToken", "buyAmount", "buyToken", "validTo"]
+      }
+    }
+  }
+}
